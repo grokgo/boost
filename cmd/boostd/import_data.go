@@ -1,7 +1,11 @@
 package main
 
 import (
+	"errors"
 	"fmt"
+	"github.com/filecoin-project/boost/storagemarket/types/dealcheckpoints"
+	"github.com/mitchellh/go-homedir"
+	"golang.org/x/xerrors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -9,7 +13,6 @@ import (
 	bcli "github.com/filecoin-project/boost/cli"
 	"github.com/google/uuid"
 	"github.com/ipfs/go-cid"
-	"github.com/mitchellh/go-homedir"
 	"github.com/urfave/cli/v2"
 )
 
@@ -23,6 +26,20 @@ var importDataCmd = &cli.Command{
 			Usage: "whether to delete the data for the offline deal after the deal has been added to a sector",
 			Value: false,
 		},
+		&cli.BoolFlag{
+			Name:  "remote",
+			Usage: "is it a remote file",
+			Value: true,
+		},
+		&cli.StringFlag{
+			Name:  "remote-path",
+			Usage: "remote file download path",
+		},
+		&cli.StringFlag{
+			Name:     "local-path",
+			Usage:    "local file path",
+			Required: true,
+		},
 	},
 	Action: func(cctx *cli.Context) error {
 		if cctx.Args().Len() < 2 {
@@ -30,21 +47,12 @@ var importDataCmd = &cli.Command{
 		}
 
 		id := cctx.Args().Get(0)
-		tpath := cctx.Args().Get(1)
-
-		path, err := homedir.Expand(tpath)
-		if err != nil {
-			return fmt.Errorf("expanding file path: %w", err)
-		}
-
-		filePath, err := filepath.Abs(path)
-		if err != nil {
-			return fmt.Errorf("failed get absolute path for file: %w", err)
-		}
-
-		_, err = os.Stat(filePath)
-		if err != nil {
-			return fmt.Errorf("opening file %s: %w", filePath, err)
+		fileName := cctx.Args().Get(1)
+		localPath := cctx.String("local-path")
+		if strings.HasSuffix(localPath, "/") {
+			localPath = fmt.Sprintf("%s%s", localPath, fileName)
+		} else {
+			localPath = fmt.Sprintf("%s/%s", localPath, fileName)
 		}
 
 		// Parse the first parameter as a deal UUID or a proposal CID
@@ -63,6 +71,52 @@ var importDataCmd = &cli.Command{
 			return err
 		}
 		defer closer()
+
+		pds, err := napi.BoostDeal(cctx.Context, dealUuid)
+		if err != nil {
+			return err
+		}
+
+		if pds.Checkpoint != dealcheckpoints.Accepted {
+			return xerrors.Errorf("the order %s has been imported", dealUuid.String())
+		}
+
+		remote := cctx.Bool("remote")
+		localFileExists, _ := pathExists(localPath)
+		if !localFileExists {
+			if remote {
+				remotePath := cctx.String("remote-path")
+				if remotePath == "" {
+					return errors.New("remote-path not empty")
+				}
+				if strings.HasSuffix(remotePath, "/") {
+					remotePath = fmt.Sprintf("%s%s", remotePath, fileName)
+				} else {
+					remotePath = fmt.Sprintf("%s/%s", remotePath, fileName)
+				}
+				if err := downloadFile(localPath, remotePath); err != nil {
+					_ = os.RemoveAll(localPath)
+					return err
+				}
+			} else {
+				return errors.New("local file does not exist")
+			}
+		}
+
+		path, err := homedir.Expand(localPath)
+		if err != nil {
+			return fmt.Errorf("expanding file path: %w", err)
+		}
+
+		filePath, err := filepath.Abs(path)
+		if err != nil {
+			return fmt.Errorf("failed get absolute path for file: %w", err)
+		}
+
+		_, err = os.Stat(filePath)
+		if err != nil {
+			return fmt.Errorf("opening file %s: %w", filePath, err)
+		}
 
 		// If the user has supplied a signed proposal cid
 		deleteAfterImport := cctx.Bool("delete-after-import")

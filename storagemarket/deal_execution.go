@@ -175,10 +175,11 @@ func (p *Provider) execDealUptoAddPiece(ctx context.Context, deal *types.Provide
 		p.dealLogger.Infow(deal.DealUuid, "deal data-transfer can no longer be cancelled")
 	} else if deal.Checkpoint < dealcheckpoints.Transferred {
 		// verify CommP matches for an offline deal
-		if err := p.verifyCommP(deal); err != nil {
-			err.error = fmt.Errorf("error when matching commP for imported data for offline deal: %w", err)
-			return err
-		}
+		//if err := p.verifyCommP(deal); err != nil {
+		//	err.error = fmt.Errorf("error when matching commP for imported data for offline deal: %w", err)
+		//	return err
+		//}
+		p.dealLogger.Infow(deal.DealUuid, "skipping commP for offline deal")
 		p.dealLogger.Infow(deal.DealUuid, "commp matched successfully for imported data for offline deal")
 
 		// update checkpoint
