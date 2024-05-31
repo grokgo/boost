@@ -19,9 +19,11 @@ func (m *MinioMount) Close() error {
 }
 
 func (m *MinioMount) Fetch(ctx context.Context) (mount.Reader, error) {
+	log.Infof("minio fetch values: %s, %s", m.bucketName, m.objectName)
 	o, err := m.client.GetObject(m.bucketName, m.objectName, minio.GetObjectOptions{})
 	if err != nil {
-		return nil, fmt.Errorf("minio get object error: %v", err)
+		log.Errorf("minio fetch error: %v", err)
+		return nil, err
 	}
 	return o, nil
 }
