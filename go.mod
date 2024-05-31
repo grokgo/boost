@@ -320,6 +320,7 @@ require (
 	github.com/ipni/ipni-cli v0.1.1
 	github.com/ipni/storetheindex v0.8.1
 	github.com/manifoldco/promptui v0.9.0
+	github.com/minio/minio-go v6.0.14+incompatible
 	github.com/schollz/progressbar/v3 v3.14.1
 )
 
@@ -335,6 +336,7 @@ require (
 	github.com/gammazero/channelqueue v0.2.1 // indirect
 	github.com/gammazero/deque v0.2.1 // indirect
 	github.com/georgysavva/scany/v2 v2.0.0 // indirect
+	github.com/go-ini/ini v1.67.0 // indirect
 	github.com/google/pprof v0.0.0-20240207164012-fb44976bdcd5 // indirect
 	github.com/hailocab/go-hostpool v0.0.0-20160125115350-e80d13ce29ed // indirect
 	github.com/hashicorp/go-cleanhttp v0.5.2 // indirect

@@ -2,16 +2,16 @@ package sectoraccessor
 
 import (
 	"context"
+	"fmt"
+	"github.com/minio/minio-go"
 	"io"
-
-	"github.com/ipfs/go-cid"
-	logging "github.com/ipfs/go-log/v2"
-	"golang.org/x/xerrors"
+	"os"
 
 	retrievalmarket_types "github.com/filecoin-project/boost/retrievalmarket/types"
 	"github.com/filecoin-project/dagstore/mount"
 	"github.com/filecoin-project/go-address"
 	"github.com/filecoin-project/go-state-types/abi"
+	logging "github.com/ipfs/go-log/v2"
 
 	"github.com/filecoin-project/lotus/api"
 	"github.com/filecoin-project/lotus/api/v1api"
@@ -19,23 +19,45 @@ import (
 	"github.com/filecoin-project/lotus/markets/dagstore"
 	"github.com/filecoin-project/lotus/node/modules/dtypes"
 	"github.com/filecoin-project/lotus/storage/sealer"
-	"github.com/filecoin-project/lotus/storage/sealer/storiface"
 	"github.com/filecoin-project/lotus/storage/sectorblocks"
 )
 
 var log = logging.Logger("sectoraccessor")
 
 type sectorAccessor struct {
-	maddr address.Address
-	secb  sectorblocks.SectorBuilder
-	pp    sealer.PieceProvider
-	full  v1api.FullNode
+	minio      *minio.Client
+	bucketName string
+	maddr      address.Address
+	secb       sectorblocks.SectorBuilder
+	pp         sealer.PieceProvider
+	full       v1api.FullNode
 }
 
 var _ retrievalmarket_types.SectorAccessor = (*sectorAccessor)(nil)
 
 func NewSectorAccessor(maddr dtypes.MinerAddress, secb sectorblocks.SectorBuilder, pp sealer.PieceProvider, full v1api.FullNode) dagstore.SectorAccessor {
-	return &sectorAccessor{address.Address(maddr), secb, pp, full}
+	endpoint, ok := os.LookupEnv("MINIO_ENDPOINT")
+	if !ok {
+		return nil
+	}
+	accessKeyID, ok := os.LookupEnv("MINIO_ACCESS_KEY_ID")
+	if !ok {
+		return nil
+	}
+	secretAccessKey, ok := os.LookupEnv("MINIO_SECRET_ACCESS_KEY")
+	if !ok {
+		return nil
+	}
+	bucketName, ok := os.LookupEnv("MINIO_BUCKET_NAME")
+	if !ok {
+		return nil
+	}
+
+	minioClient, err := minio.New(endpoint, accessKeyID, secretAccessKey, false)
+	if err != nil {
+		log.Errorf("new minio error: %v", err)
+	}
+	return &sectorAccessor{minioClient, bucketName, address.Address(maddr), secb, pp, full}
 }
 
 func (sa *sectorAccessor) UnsealSector(ctx context.Context, sectorID abi.SectorNumber, pieceOffset abi.UnpaddedPieceSize, length abi.UnpaddedPieceSize) (io.ReadCloser, error) {
@@ -44,61 +66,29 @@ func (sa *sectorAccessor) UnsealSector(ctx context.Context, sectorID abi.SectorN
 
 func (sa *sectorAccessor) UnsealSectorAt(ctx context.Context, sectorID abi.SectorNumber, pieceOffset abi.UnpaddedPieceSize, length abi.UnpaddedPieceSize) (mount.Reader, error) {
 	log.Debugf("get sector %d, pieceOffset %d, length %d", sectorID, pieceOffset, length)
+
 	si, err := sa.sectorsStatus(ctx, sectorID, false)
 	if err != nil {
 		return nil, err
 	}
 
-	mid, err := address.IDFromAddress(sa.maddr)
-	if err != nil {
-		return nil, err
+	piece := si.Pieces[0]
+	if pieceOffset > 0 && len(si.Pieces) > 1 {
+		piece = si.Pieces[1]
 	}
 
-	ref := storiface.SectorRef{
-		ID: abi.SectorID{
-			Miner:  abi.ActorID(mid),
-			Number: sectorID,
-		},
-		ProofType: si.SealProof,
-	}
+	objectName := fmt.Sprintf("%s.car", piece.Piece.PieceCID.String())
 
-	var commD cid.Cid
-	if si.CommD != nil {
-		commD = *si.CommD
+	r := MinioMount{
+		client:     sa.minio,
+		bucketName: sa.bucketName,
+		objectName: objectName,
 	}
-
-	// Get a reader for the piece, unsealing the piece if necessary
-	log.Debugf("read piece in sector %d, pieceOffset %d, length %d from miner %d", sectorID, pieceOffset, length, mid)
-	r, unsealed, err := sa.pp.ReadPiece(ctx, ref, storiface.UnpaddedByteIndex(pieceOffset), length, si.Ticket.Value, commD)
-	if err != nil {
-		return nil, xerrors.Errorf("failed to unseal piece from sector %d: %w", sectorID, err)
-	}
-	_ = unsealed // todo: use
-
-	return r, nil
+	return r.Fetch(ctx)
 }
 
 func (sa *sectorAccessor) IsUnsealed(ctx context.Context, sectorID abi.SectorNumber, offset abi.UnpaddedPieceSize, length abi.UnpaddedPieceSize) (bool, error) {
-	si, err := sa.sectorsStatus(ctx, sectorID, true)
-	if err != nil {
-		return false, xerrors.Errorf("failed to get sector info: %w", err)
-	}
-
-	mid, err := address.IDFromAddress(sa.maddr)
-	if err != nil {
-		return false, err
-	}
-
-	ref := storiface.SectorRef{
-		ID: abi.SectorID{
-			Miner:  abi.ActorID(mid),
-			Number: sectorID,
-		},
-		ProofType: si.SealProof,
-	}
-
-	log.Debugf("will call IsUnsealed now sector=%+v, offset=%d, size=%d", sectorID, offset, length)
-	return sa.pp.IsUnsealed(ctx, ref, storiface.UnpaddedByteIndex(offset), length)
+	return true, nil
 }
 
 func (sa *sectorAccessor) sectorsStatus(ctx context.Context, sid abi.SectorNumber, showOnChainInfo bool) (api.SectorInfo, error) {
