@@ -57,6 +57,7 @@ func NewSectorAccessor(maddr dtypes.MinerAddress, secb sectorblocks.SectorBuilde
 	if err != nil {
 		log.Errorf("new minio error: %v", err)
 	}
+
 	return &sectorAccessor{minioClient, bucketName, address.Address(maddr), secb, pp, full}
 }
 

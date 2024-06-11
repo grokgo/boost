@@ -9,13 +9,14 @@ import (
 )
 
 type MinioMount struct {
-	client     *minio.Client
-	bucketName string
-	objectName string
+	client         *minio.Client
+	bucketName     string
+	objectName     string
+	originalObject *minio.Object
 }
 
 func (m *MinioMount) Close() error {
-	return nil
+	return m.originalObject.Close()
 }
 
 func (m *MinioMount) Fetch(ctx context.Context) (mount.Reader, error) {
@@ -25,7 +26,8 @@ func (m *MinioMount) Fetch(ctx context.Context) (mount.Reader, error) {
 		log.Errorf("minio fetch error: %v", err)
 		return nil, err
 	}
-	return o, nil
+	m.originalObject = o
+	return m.originalObject, nil
 }
 
 func (m *MinioMount) Info() mount.Info {
